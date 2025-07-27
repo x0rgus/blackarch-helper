@@ -62,22 +62,37 @@ _list_tools_in_category() {
     pacman -Sg "$1" 2>/dev/null | awk '{print $2}'
 }
 
-# --- NEW: Verbose-aware Command Execution ---
+# NEW: Pre-processes the tool list to show which are already installed.
+_get_tools_with_install_status() {
+    local category="$1"
+    # Get all installed blackarch packages once.
+    local installed_pkgs
+    installed_pkgs=$(pacman -Qqg blackarch 2>/dev/null)
+
+    # Get all tools in the given category.
+    _list_tools_in_category "$category" | while read -r tool; do
+        # Check if the tool is in the list of installed packages.
+        if grep -q -w "^${tool}$" <<< "$installed_pkgs"; then
+            # If installed, prepend a check mark.
+            printf "✔ %s\n" "$tool"
+        else
+            # If not, prepend spaces for alignment.
+            printf "  %s\n" "$tool"
+        fi
+    done
+}
+
+# --- Verbose-aware Command Execution ---
 
 # Shows a spinner while a command runs in the background.
-# This provides user feedback without cluttering the terminal.
-# Usage: _spinner "Your message..." command_to_run args...
 _spinner() {
     local msg="$1"
     shift
     local cmd=("$@")
     local spinner_chars="/-\\|"
     
-    # Run the command in the background
     "${cmd[@]}" &
     local pid=$!
-
-    # Trap Ctrl+C to kill the background process
     trap 'kill $pid 2>/dev/null' SIGINT
 
     einfo "$msg"
@@ -87,24 +102,19 @@ _spinner() {
             sleep 0.1
         done
     done
-    echo -e "\r${COLOR_GREEN}[DONE]${COLOR_RESET} Operation finished.   " # Extra spaces to clear the line
+    echo -e "\r${COLOR_GREEN}[DONE]${COLOR_RESET} Operation finished.   "
 
-    # Wait for the command to get its exit status
     wait $pid
     return $?
 }
 
-# Installs or upgrades packages. If VERBOSE is true, shows all output.
-# Otherwise, shows a spinner and hides the output.
-# Usage: _run_pacman_S package1 package2 ...
+# Installs or upgrades packages.
 _run_pacman_S() {
     if [[ "$VERBOSE" == "true" ]]; then
         einfo "Running pacman in verbose mode..."
-        # We use SC2086 here intentionally to allow word splitting for packages.
         # shellcheck disable=SC2086
         sudo pacman -S --needed --noconfirm "$@"
     else
-        # Use the spinner for a clean UI
         _spinner "Running pacman (output hidden)..." sudo pacman -S --needed --noconfirm "$@" >/dev/null 2>&1
     fi
 
@@ -154,10 +164,8 @@ handle_tool() {
             einfo "Listing all tools in the BlackArch repository..."
             _list_all_tools
             ;;
-        list-installed) # NEW
+        list-installed)
             einfo "Listing all installed BlackArch packages:"
-            # pacman -Qg lists installed packages (-Q) from a specific group (-g).
-            # This is more precise than grepping the output of -Q.
             pacman -Qg blackarch --color=never
             ;;
         search)
@@ -170,17 +178,14 @@ handle_tool() {
             einfo "Displaying information for the tool '$tool_name':"
             pacman -Si "$tool_name"
             ;;
-        install) # NEW
+        install)
             [[ -z "$tool_name" ]] && edie "Usage: $0 tool install <package-name>"
             einfo "Attempting to install '$tool_name'..."
             _run_pacman_S "$tool_name"
             ;;
-        upgrade) # NEW
+        upgrade)
             einfo "Checking for installed BlackArch packages to upgrade..."
             local installed_packages
-            # FIXED: This command is now language-independent. It compares a list of all
-            # available blackarch packages with a list of all installed packages and
-            # finds the common ones.
             installed_packages=$(comm -12 <(pacman -Slq blackarch | sort) <(pacman -Qq | sort))
             
             if [[ -z "$installed_packages" ]]; then
@@ -225,11 +230,15 @@ interactive_menu() {
         while true; do
             einfo "Category: ${COLOR_CYAN}$category${COLOR_RESET}"
             local fzf_output
-            fzf_output=$(_list_tools_in_category "$category" | fzf \
+            # UPDATED: Major changes to the fzf command for better UX.
+            fzf_output=$(_get_tools_with_install_status "$category" | fzf \
                 --multi \
                 --prompt="▶ Tool: " \
                 --border \
-                --header="Use TAB to select. ENTER to install, ESC to go back." \
+                --header="✔=Installed | TAB to select | ENTER to install | CTRL-I for info | ESC to go back" \
+                --preview-window 'right:50%:border-left' \
+                --preview 'pacman -Si $(echo {} | awk "{print \$NF}")' \
+                --bind 'ctrl-i:toggle-preview' \
                 --expect=esc)
 
             [[ -z "$fzf_output" ]] && break 2
@@ -242,7 +251,8 @@ interactive_menu() {
             fi
 
             local selected_tools
-            selected_tools=$(tail -n +2 <<< "$fzf_output")
+            # UPDATED: Strip the status indicator (✔) and spaces from the selection.
+            selected_tools=$(tail -n +2 <<< "$fzf_output" | awk '{print $NF}')
 
             if [[ -z "$selected_tools" ]]; then
                 ewarn "No tools selected. Press ESC to go back."
@@ -257,7 +267,6 @@ interactive_menu() {
             echo
 
             if [[ "$reply" =~ ^[Yy]$ ]]; then
-                # Use the pacman runner function
                 _run_pacman_S "${selected_tools}"
                 einfo "Installation complete. Press any key to continue."
                 read -n 1 -s
@@ -315,12 +324,12 @@ EOF
 # Initial check
 check_blackarch_repo
 
-# --- NEW: Argument Parsing for Flags ---
+# --- Argument Parsing for Flags ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -v|--verbose)
             VERBOSE=true
-            shift # Remove --verbose from the list of arguments
+            shift
             ;;
         *)
             break
@@ -329,7 +338,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 
-# If no arguments are left after parsing flags, default to the interactive menu.
+# If no arguments are left, default to the interactive menu.
 if [[ $# -eq 0 ]]; then
     interactive_menu
     exit 0
@@ -343,7 +352,7 @@ case "$1" in
     tool)
         handle_tool "${@:2}"
         ;;
-    interactive | fzf) # Keep 'fzf' as an alias
+    interactive | fzf)
         interactive_menu
         ;;
     help | --help | -h)
