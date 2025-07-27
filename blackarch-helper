@@ -156,7 +156,9 @@ handle_tool() {
             ;;
         list-installed) # NEW
             einfo "Listing all installed BlackArch packages:"
-            pacman -Qg | grep 'blackarch' --color=never
+            # pacman -Qg lists installed packages (-Q) from a specific group (-g).
+            # This is more precise than grepping the output of -Q.
+            pacman -Qg blackarch --color=never
             ;;
         search)
             [[ -z "$tool_name" ]] && edie "Usage: $0 tool search <keyword>"
@@ -176,7 +178,10 @@ handle_tool() {
         upgrade) # NEW
             einfo "Checking for installed BlackArch packages to upgrade..."
             local installed_packages
-            installed_packages=$(pacman -Q | grep 'blackarch' | cut -d' ' -f1)
+            # FIXED: This command is now language-independent. It compares a list of all
+            # available blackarch packages with a list of all installed packages and
+            # finds the common ones.
+            installed_packages=$(comm -12 <(pacman -Slq blackarch | sort) <(pacman -Qq | sort))
             
             if [[ -z "$installed_packages" ]]; then
                 einfo "No BlackArch packages are installed. Nothing to upgrade."
