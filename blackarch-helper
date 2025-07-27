@@ -62,22 +62,37 @@ _list_tools_in_category() {
     pacman -Sg "$1" 2>/dev/null | awk '{print $2}'
 }
 
-# --- NEW: Verbose-aware Command Execution ---
+# NEW: Pre-processes the tool list to show which are already installed.
+_get_tools_with_install_status() {
+    local category="$1"
+    # Get all installed blackarch packages once.
+    local installed_pkgs
+    installed_pkgs=$(pacman -Qqg blackarch 2>/dev/null)
+
+    # Get all tools in the given category.
+    _list_tools_in_category "$category" | while read -r tool; do
+        # Check if the tool is in the list of installed packages.
+        if grep -q -w "^${tool}$" <<< "$installed_pkgs"; then
+            # If installed, prepend a check mark.
+            printf "✔ %s\n" "$tool"
+        else
+            # If not, prepend spaces for alignment.
+            printf "  %s\n" "$tool"
+        fi
+    done
+}
+
+# --- Verbose-aware Command Execution ---
 
 # Shows a spinner while a command runs in the background.
-# This provides user feedback without cluttering the terminal.
-# Usage: _spinner "Your message..." command_to_run args...
 _spinner() {
     local msg="$1"
     shift
     local cmd=("$@")
     local spinner_chars="/-\\|"
     
-    # Run the command in the background
     "${cmd[@]}" &
     local pid=$!
-
-    # Trap Ctrl+C to kill the background process
     trap 'kill $pid 2>/dev/null' SIGINT
 
     einfo "$msg"
@@ -87,29 +102,24 @@ _spinner() {
             sleep 0.1
         done
     done
-    echo -e "\r${COLOR_GREEN}[DONE]${COLOR_RESET} Operation finished.   " # Extra spaces to clear the line
+    echo -e "\r${COLOR_GREEN}[DONE]${COLOR_RESET} Operation finished.   "
 
-    # Wait for the command to get its exit status
     wait $pid
     return $?
 }
 
-# Installs packages. If VERBOSE is true, shows all output.
-# Otherwise, shows a spinner and hides the output.
-# Usage: _install_packages package1 package2 ...
-_install_packages() {
+# Installs or upgrades packages.
+_run_pacman_S() {
     if [[ "$VERBOSE" == "true" ]]; then
-        einfo "Running installation in verbose mode..."
-        # We use SC2086 here intentionally to allow word splitting for packages.
+        einfo "Running pacman in verbose mode..."
         # shellcheck disable=SC2086
         sudo pacman -S --needed --noconfirm "$@"
     else
-        # Use the spinner for a clean UI
-        _spinner "Installing packages (output hidden)..." sudo pacman -S --needed --noconfirm "$@" >/dev/null 2>&1
+        _spinner "Running pacman (output hidden)..." sudo pacman -S --needed --noconfirm "$@" >/dev/null 2>&1
     fi
 
     if [[ $? -ne 0 ]]; then
-        eerror "An error occurred during installation."
+        eerror "An error occurred during the pacman operation."
         ewarn "Try running with the --verbose flag to see detailed output."
         return 1
     fi
@@ -133,7 +143,7 @@ handle_category() {
             [[ -z "$category_name" ]] && edie "Usage: $0 category install <category-name>"
             einfo "Preparing to install all tools from the '$category_name' category..."
             # shellcheck disable=SC2046
-            _install_packages $(_list_tools_in_category "$category_name")
+            _run_pacman_S $(_list_tools_in_category "$category_name")
             einfo "Installation of category '$category_name' complete."
             ;;
         *)
@@ -154,6 +164,10 @@ handle_tool() {
             einfo "Listing all tools in the BlackArch repository..."
             _list_all_tools
             ;;
+        list-installed)
+            einfo "Listing all installed BlackArch packages:"
+            pacman -Qg blackarch --color=never
+            ;;
         search)
             [[ -z "$tool_name" ]] && edie "Usage: $0 tool search <keyword>"
             einfo "Searching for tools with the keyword '$tool_name':"
@@ -162,11 +176,40 @@ handle_tool() {
         info)
             [[ -z "$tool_name" ]] && edie "Usage: $0 tool info <tool-name>"
             einfo "Displaying information for the tool '$tool_name':"
-            # We don't hide output here, as the user explicitly asked for it.
             pacman -Si "$tool_name"
             ;;
+        install)
+            [[ -z "$tool_name" ]] && edie "Usage: $0 tool install <package-name>"
+            einfo "Attempting to install '$tool_name'..."
+            _run_pacman_S "$tool_name"
+            ;;
+        upgrade)
+            einfo "Checking for installed BlackArch packages to upgrade..."
+            local installed_packages
+            installed_packages=$(comm -12 <(pacman -Slq blackarch | sort) <(pacman -Qq | sort))
+            
+            if [[ -z "$installed_packages" ]]; then
+                einfo "No BlackArch packages are installed. Nothing to upgrade."
+                exit 0
+            fi
+            
+            einfo "The following installed BlackArch packages will be checked for updates:"
+            echo -e "${COLOR_CYAN}${installed_packages}${COLOR_RESET}"
+            
+            read -p $'\e[33m[WARN]\e[0m Do you want to proceed with the upgrade? (y/N) ' -n 1 -r reply
+            echo
+            
+            if [[ "$reply" =~ ^[Yy]$ ]]; then
+                einfo "Starting upgrade..."
+                # shellcheck disable=SC2086
+                _run_pacman_S $installed_packages
+                einfo "Upgrade process complete."
+            else
+                ewarn "Upgrade cancelled by the user."
+            fi
+            ;;
         *)
-            eerror "Invalid subcommand for 'tool'. Use 'list', 'search', or 'info'."
+            eerror "Invalid subcommand for 'tool'. Use 'list', 'search', 'info', 'install', 'upgrade', or 'list-installed'."
             usage
             exit 1
             ;;
@@ -187,11 +230,15 @@ interactive_menu() {
         while true; do
             einfo "Category: ${COLOR_CYAN}$category${COLOR_RESET}"
             local fzf_output
-            fzf_output=$(_list_tools_in_category "$category" | fzf \
+            # UPDATED: Major changes to the fzf command for better UX.
+            fzf_output=$(_get_tools_with_install_status "$category" | fzf \
                 --multi \
                 --prompt="▶ Tool: " \
                 --border \
-                --header="Use TAB to select. ENTER to install, ESC to go back." \
+                --header="✔=Installed | TAB to select | ENTER to install | CTRL-I for info | ESC to go back" \
+                --preview-window 'right:50%:border-left' \
+                --preview 'pacman -Si $(echo {} | awk "{print \$NF}")' \
+                --bind 'ctrl-i:toggle-preview' \
                 --expect=esc)
 
             [[ -z "$fzf_output" ]] && break 2
@@ -204,7 +251,8 @@ interactive_menu() {
             fi
 
             local selected_tools
-            selected_tools=$(tail -n +2 <<< "$fzf_output")
+            # UPDATED: Strip the status indicator (✔) and spaces from the selection.
+            selected_tools=$(tail -n +2 <<< "$fzf_output" | awk '{print $NF}')
 
             if [[ -z "$selected_tools" ]]; then
                 ewarn "No tools selected. Press ESC to go back."
@@ -219,8 +267,7 @@ interactive_menu() {
             echo
 
             if [[ "$reply" =~ ^[Yy]$ ]]; then
-                # Use the new installation function
-                _install_packages "${selected_tools}"
+                _run_pacman_S "${selected_tools}"
                 einfo "Installation complete. Press any key to continue."
                 read -n 1 -s
             else
@@ -253,8 +300,11 @@ ${COLOR_BOLD}COMMANDS:${COLOR_RESET}
 
     ${COLOR_CYAN}tool${COLOR_RESET}        Manage individual tools.
         ${COLOR_YELLOW}list${COLOR_RESET}          Lists all tools in the repository.
+        ${COLOR_YELLOW}list-installed${COLOR_RESET}  Lists all installed BlackArch packages.
         ${COLOR_YELLOW}search${COLOR_RESET}  <str>  Searches for tools by keyword.
         ${COLOR_YELLOW}info${COLOR_RESET}    <pkg>  Shows information about a tool (package).
+        ${COLOR_YELLOW}install${COLOR_RESET} <pkg>  Installs a specific BlackArch package.
+        ${COLOR_YELLOW}upgrade${COLOR_RESET}       Upgrades all installed BlackArch packages.
 
     ${COLOR_CYAN}interactive${COLOR_RESET}   Opens an interactive FZF menu to explore categories and tools.
     ${COLOR_CYAN}help${COLOR_RESET}          Shows this help message.
@@ -262,7 +312,8 @@ ${COLOR_BOLD}COMMANDS:${COLOR_RESET}
 ${COLOR_BOLD}EXAMPLES:${COLOR_RESET}
     blackarch-helper category list
     blackarch-helper tool search nmap
-    blackarch-helper --verbose tool info metasploit
+    blackarch-helper tool install metasploit
+    sudo blackarch-helper tool upgrade
     sudo blackarch-helper --verbose category install blackarch-scanner
 
 EOF
@@ -273,27 +324,21 @@ EOF
 # Initial check
 check_blackarch_repo
 
-# --- NEW: Argument Parsing for Flags ---
-# This loop handles flags like --verbose.
-# It must come before the main command dispatcher.
-# It iterates through arguments, sets flags, and removes them with 'shift'
-# so they don't interfere with the positional command parsing later.
+# --- Argument Parsing for Flags ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -v|--verbose)
             VERBOSE=true
-            shift # Remove --verbose from the list of arguments
+            shift
             ;;
         *)
-            # If it's not a known flag, stop parsing flags and break the loop.
-            # The rest of the arguments will be handled by the command dispatcher.
             break
             ;;
     esac
 done
 
 
-# If no arguments are left after parsing flags, default to the interactive menu.
+# If no arguments are left, default to the interactive menu.
 if [[ $# -eq 0 ]]; then
     interactive_menu
     exit 0
@@ -302,14 +347,12 @@ fi
 # Command Dispatcher
 case "$1" in
     category)
-        # Pass the remaining arguments (from the second one on) to the handler
         handle_category "${@:2}"
         ;;
     tool)
-        # Pass the remaining arguments (from the second one on) to the handler
         handle_tool "${@:2}"
         ;;
-    interactive | fzf) # Keep 'fzf' as an alias
+    interactive | fzf)
         interactive_menu
         ;;
     help | --help | -h)
@@ -317,7 +360,6 @@ case "$1" in
         ;;
     *)
         eerror "Unknown command '$1'."
-        # Simple "did you mean?". Just suggest the valid commands.
         echo -e "\nValid commands are: ${COLOR_CYAN}category, tool, interactive, help${COLOR_RESET}"
         exit 1
         ;;

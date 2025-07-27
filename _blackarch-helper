@@ -24,10 +24,14 @@ _blackarch_helper() {
         'list:List all categories'
         'install:Install an entire category'
     )
+    # UPDATED tool subcommands
     tool_subcommands=(
-        'list:List all tools'
-        'search:Search for a tool'
-        'info:Show info for a tool'
+        'list:List all tools in the repository'
+        'list-installed:List all installed BlackArch packages'
+        'search:Search for a tool by keyword'
+        'info:Show info for a specific tool'
+        'install:Install a specific tool'
+        'upgrade:Upgrade all installed BlackArch packages'
     )
 
     _arguments -C \
@@ -64,8 +68,8 @@ _blackarch_helper() {
                     ;;
                 tool)
                     case $words[3] in
-                        info)
-                            # Generating a list of all tools is too slow.
+                        info|install)
+                            # Generating a list of all tools is too slow for completion.
                             _message "tool name (use 'tool search' to find one)"
                             ;;
                         search)

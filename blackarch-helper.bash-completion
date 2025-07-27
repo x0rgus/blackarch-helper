@@ -7,7 +7,7 @@ _blackarch_helper_completions() {
     # Variables
     local commands="category tool interactive help --help -h --verbose -v"
     local category_subcommands="list install"
-    local tool_subcommands="list search info"
+    local tool_subcommands="list list-installed search info install upgrade"
 
     # Main command completion
     if [[ ${cword} -eq 1 ]]; then
@@ -33,7 +33,7 @@ _blackarch_helper_completions() {
         tool)
             if [[ ${cword} -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "${tool_subcommands}" -- "${cur}"))
-            elif [[ ${cword} -eq 3 && ("${words[2]}" == "info" || "${words[2]}" == "search") ]]; then
+            elif [[ ${cword} -eq 3 && ("${words[2]}" == "info" || "${words[2]}" == "search" || "${words[2]}" == "install") ]]; then
                 # Autocompleting all tool names is too slow.
                 # Default to file directory completion.
                 _filedir
