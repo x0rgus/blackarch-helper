@@ -1,4 +1,4 @@
-# Maintainer: Lucas lucas.pr1@hotmail.com
+# Maintainer: Lucas <lucas.pr1@hotmail.com>
 pkgname=blackarch-helper
 pkgver=1.0.0
 pkgrel=1
@@ -7,10 +7,10 @@ arch=('any')
 url="https://github.com/x0rgus/blackarch-helper"
 license=('MIT')
 depends=('bash' 'pacman' 'grep' 'coreutils' 'fzf')
-source=("blackarch-helper.sh")
+source=("blackarch-helper")
 md5sums=('SKIP')
 
 package() {
-    install -Dm755 "$srcdir/blackarch-helper.sh" "$pkgdir/usr/bin/blackarch-helper"
+    install -Dm755 "$srcdir/blackarch-helper" "$pkgdir/usr/bin/blackarch-helper"
 }
 

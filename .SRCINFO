@@ -1,0 +1,16 @@
+pkgbase = blackarch-helper
+	pkgdesc = Simple CLI helper to explore and install tools from the BlackArch repository
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/x0rgus/blackarch-helper
+	arch = any
+	license = MIT
+	depends = bash
+	depends = pacman
+	depends = grep
+	depends = coreutils
+	depends = fzf
+	source = blackarch-helper
+	md5sums = SKIP
+
+pkgname = blackarch-helper

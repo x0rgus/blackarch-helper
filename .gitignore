@@ -1,0 +1,5 @@
+# Build artifacts
+blackarch-helper-*.pkg.tar.zst
+blackarch-helper-*-package.log
+blackarch-helper-*.pkg.tar.zst-namcap.log
+PKGBUILD-namcap.log
