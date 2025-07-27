@@ -1,89 +1,192 @@
 #!/usr/bin/env bash
+#
+# blackarch-helper: A CLI tool to explore BlackArch tools and categories.
+#
 
-# blackarch-helper: A CLI tool to explore BlackArch tools and categories
+## --- Color and Symbol Configuration ---
+COLOR_RESET=$'\033[0m'
+COLOR_GREEN=$'\033[0;32m'
+COLOR_YELLOW=$'\033[0;33m'
+COLOR_RED=$'\033[0;31m'
+COLOR_CYAN=$'\033[0;36m'
+COLOR_BOLD=$'\033[1m'
+
+# --- Logging Functions ---
+# Helper functions to standardize message output.
+
+einfo() { echo -e "${COLOR_GREEN}[INFO]${COLOR_RESET} $1"; }
+ewarn() { echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} $1"; } >&2
+eerror() { echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $1"; } >&2
+edie() { eerror "$1"; exit 1; }
+
+# --- Core Functions ---
+
+# Check if the BlackArch repository is configured in pacman.conf
+check_blackarch_repo() {
+    if ! grep -q '^\[blackarch\]' /etc/pacman.conf; then
+        eerror "BlackArch repository not found in /etc/pacman.conf."
+        echo -e "\nPlease follow the installation instructions at:"
+        echo -e "${COLOR_CYAN}https://blackarch.org/guide.html${COLOR_RESET}\n"
+        exit 1
+    fi
+}
 
 # Check if fzf is installed
 check_fzf() {
     if ! command -v fzf &>/dev/null; then
-        echo "⚠️  fzf not found. Install it using: sudo pacman -S fzf"
-        exit 1
+        edie "fzf not found. Please install it with: sudo pacman -S fzf"
     fi
 }
 
+# --- Logic Functions (Backend) ---
+
 # List all available BlackArch categories
-list_categories() {
+_list_all_categories() {
     pacman -Sg | grep '^blackarch-' | cut -d' ' -f1 | sort -u
 }
 
-# List all tools in BlackArch repository
-list_tools() {
+# List all tools in the BlackArch repository
+_list_all_tools() {
     pacman -Sgg | grep '^blackarch-' | cut -d' ' -f2 | sort -u
 }
 
 # List tools in a specific category
-list_from_category() {
-    local category="$1"
-    if [[ -z "$category" ]]; then
-        echo "Usage: $0 list <category>"
-        exit 1
-    fi
-    pacman -Sg "$category" | awk '{print $2}'
+_list_tools_in_category() {
+    pacman -Sg "$1" | awk '{print $2}'
 }
 
-# Interactive category selector using fzf
+# --- Subcommand Functions (User Interface) ---
+
+# Handler for the 'category' command
+handle_category() {
+    local action="$1"
+    local category_name="$2"
+
+    case "$action" in
+        list)
+            einfo "Listing all BlackArch categories:"
+            _list_all_categories
+            ;;
+        install)
+            [[ -z "$category_name" ]] && edie "Usage: $0 category install <category-name>"
+            einfo "Installing all tools from the '$category_name' category..."
+            # shellcheck disable=SC2046
+            sudo pacman -S --needed --noconfirm $(_list_tools_in_category "$category_name")
+            einfo "Installation of category '$category_name' complete."
+            ;;
+        *)
+            eerror "Invalid subcommand for 'category'. Use 'list' or 'install'."
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+# Handler for the 'tool' command
+handle_tool() {
+    local action="$1"
+    local tool_name="$2"
+
+    case "$action" in
+        list)
+            einfo "Listing all tools in the BlackArch repository..."
+            _list_all_tools
+            ;;
+        search)
+            [[ -z "$tool_name" ]] && edie "Usage: $0 tool search <keyword>"
+            einfo "Searching for tools with the keyword '$tool_name':"
+            _list_all_tools | grep -i --color=auto "$tool_name"
+            ;;
+        info)
+            [[ -z "$tool_name" ]] && edie "Usage: $0 tool info <tool-name>"
+            einfo "Displaying information for the tool '$tool_name':"
+            pacman -Si "$tool_name"
+            ;;
+        *)
+            eerror "Invalid subcommand for 'tool'. Use 'list', 'search', or 'info'."
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+# Interactive menu with FZF
 interactive_menu() {
     check_fzf
-    local category=$(list_categories | fzf --prompt="Select a category: ")
+    local category
+    category=$(_list_all_categories | fzf --prompt="Select a category: " --height=40% --border)
+
     if [[ -n "$category" ]]; then
-        echo "Tools in $category:"
-        list_from_category "$category"
+        einfo "Tools in category ${COLOR_CYAN}$category${COLOR_RESET}:"
+        # We use fzf again for an interactive view/selection of the tools
+        # shellcheck disable=SC2046
+        _list_tools_in_category "$category" | fzf --prompt="Tools in $category (Press ESC to exit): " --height=60% --border
     else
-        echo "No category selected."
+        ewarn "No category selected."
     fi
 }
 
-# Install all tools from a given category
-install_category() {
-    local category="$1"
-    if [[ -z "$category" ]]; then
-        echo "Usage: $0 install <category>"
-        exit 1
-    fi
-    sudo pacman -S --needed $(pacman -Sg "$category" | awk '{print $2}')
+# Help/usage function
+usage() {
+    cat <<EOF
+
+${COLOR_BOLD}blackarch-helper${COLOR_RESET}: A CLI tool to explore the BlackArch repository.
+
+${COLOR_BOLD}USAGE:${COLOR_RESET}
+    blackarch-helper <command> <subcommand> [arguments]
+
+${COLOR_BOLD}COMMANDS:${COLOR_RESET}
+    ${COLOR_CYAN}category${COLOR_RESET}    Manage tool categories.
+        ${COLOR_YELLOW}list${COLOR_RESET}          Lists all available categories.
+        ${COLOR_YELLOW}install${COLOR_RESET} <cat>  Installs all tools from a category.
+
+    ${COLOR_CYAN}tool${COLOR_RESET}        Manage individual tools.
+        ${COLOR_YELLOW}list${COLOR_RESET}          Lists all tools in the repository.
+        ${COLOR_YELLOW}search${COLOR_RESET}  <str>  Searches for tools by keyword.
+        ${COLOR_YELLOW}info${COLOR_RESET}    <pkg>  Shows information about a tool (package).
+
+    ${COLOR_CYAN}interactive${COLOR_RESET}   Opens an interactive FZF menu to explore categories and tools.
+    ${COLOR_CYAN}help${COLOR_RESET}          Shows this help message.
+
+${COLOR_BOLD}EXAMPLES:${COLOR_RESET}
+    blackarch-helper category list
+    blackarch-helper tool search nmap
+    blackarch-helper tool info metasploit
+    sudo blackarch-helper category install blackarch-scanner
+
+EOF
 }
 
-# Search tools by keyword
-search_tool() {
-    local keyword="$1"
-    if [[ -z "$keyword" ]]; then
-        echo "Usage: $0 search <keyword>"
-        exit 1
-    fi
-    list_tools | grep -i "$keyword"
-}
+# --- Main Execution ---
 
-# Get info about a specific tool
-info_tool() {
-    local tool="$1"
-    if [[ -z "$tool" ]]; then
-        echo "Usage: $0 info <tool-name>"
-        exit 1
-    fi
-    pacman -Si "$tool"
-}
+# Initial check
+check_blackarch_repo
 
-# Command dispatcher
+# If no arguments are passed, default to the interactive menu
+if [[ $# -eq 0 ]]; then
+    interactive_menu
+    exit 0
+fi
+
+# Command Dispatcher
 case "$1" in
-    categories) list_categories ;;
-    tools) list_tools ;;
-    list) list_from_category "$2" ;;
-    fzf) interactive_menu ;;
-    install) install_category "$2" ;;
-    search) search_tool "$2" ;;
-    info) info_tool "$2" ;;
+    category)
+        # Pass the remaining arguments (from the second one on) to the handler
+        handle_category "${@:2}"
+        ;;
+    tool)
+        handle_tool "${@:2}"
+        ;;
+    interactive | fzf) # Keep 'fzf' as an alias
+        interactive_menu
+        ;;
+    help | --help | -h)
+        usage
+        ;;
     *)
-        echo "Usage: $0 {categories|tools|list|fzf|install|search|info}"
+        eerror "Unknown command '$1'."
+        # Simple "did you mean?". Just suggest the valid commands.
+        echo -e "\nValid commands are: ${COLOR_CYAN}category, tool, interactive, help${COLOR_RESET}"
         exit 1
         ;;
 esac
-
