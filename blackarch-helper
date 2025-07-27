@@ -6,6 +6,9 @@
 # License: MIT
 # Repository: https://github.com/x0rgus/blackarch-helper
 
+# --- Configuration ---
+# Set VERBOSE to "false" by default. It can be overridden by a command-line flag.
+VERBOSE=false
 
 ## --- Color and Symbol Configuration ---
 COLOR_RESET=$'\033[0m'
