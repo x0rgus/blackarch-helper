@@ -7,11 +7,14 @@ arch=('any')
 url="https://github.com/x0rgus/blackarch-helper"
 license=('MIT')
 depends=('bash' 'fzf')
-source=("blackarch-helper" "LICENSE")
-md5sums=('SKIP' 'SKIP')
+source=("blackarch-helper" "LICENSE" "blackarch-helper.1" "blackarch-helper.bash-completion" "_blackarch-helper")
+md5sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 package() {
     install -Dm755 "$srcdir/blackarch-helper" "$pkgdir/usr/bin/blackarch-helper"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 "${srcdir}/blackarch-helper.1" "${pkgdir}/usr/share/man/man1/${pkgname}.1"
+    install -Dm644 "${srcdir}/blackarch-helper.bash-completion" "${pkgdir}/usr/share/bash-completion/completions/${pkgname}"
+    install -Dm644 "${srcdir}/_blackarch-helper" "${pkgdir}/usr/share/zsh/site-functions/_${pkgname}"
 }
 
