@@ -3,7 +3,8 @@
 A TUI/CLI helper for exploring and managing tools from the BlackArch repository.
 
 This tool provides an `fzf`-based interactive menu for easy navigation and package management, as well as a standard command-line interface for scripting and automation.
-![image](media/s1.png)
+![image](media/s1.png)   
+![image](media/s2.png)
 
 ## Features
 
