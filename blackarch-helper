@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 #
-# blackarch-helper: A CLI tool to explore BlackArch tools and categories.
-#
+# blackarch-helper
+# Simple CLI helper for BlackArch tools
+# Author: Lucas "x0rgus"
+# License: MIT
+# Repository: https://github.com/x0rgus/blackarch-helper
+
 
 ## --- Color and Symbol Configuration ---
 COLOR_RESET=$'\033[0m'

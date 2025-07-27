@@ -3,4 +3,5 @@
 *-package.log
 *-namcap.log
 *.log
-
+src/*
+pkg/*
