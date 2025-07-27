@@ -6,11 +6,32 @@ _blackarch_helper() {
     local -a tool_subcommands
     local state
 
-    commands=('category:Manage tool categories' 'tool:Manage individual tools' 'interactive:Open the interactive menu' 'help:Show the help message')
-    category_subcommands=('list:List all categories' 'install:Install an entire category')
-    tool_subcommands=('list:List all tools' 'search:Search for a tool' 'info:Show info for a tool')
+    # Options with descriptions
+    local -a global_opts
+    global_opts=(
+        '(-v --verbose)'{-v,--verbose}'[Enable verbose output]'
+        '(-h --help)'{-h,--help}'[Show help message]'
+    )
+
+    # Commands with descriptions
+    commands=(
+        'category:Manage tool categories'
+        'tool:Manage individual tools'
+        'interactive:Open the interactive menu'
+        'help:Show the help message'
+    )
+    category_subcommands=(
+        'list:List all categories'
+        'install:Install an entire category'
+    )
+    tool_subcommands=(
+        'list:List all tools'
+        'search:Search for a tool'
+        'info:Show info for a tool'
+    )
 
     _arguments -C \
+        $global_opts \
         '1: :->command' \
         '2: :->subcommand' \
         '3: :->argument'
@@ -36,7 +57,7 @@ _blackarch_helper() {
                         install)
                             # Dynamically generate category list
                             local -a categories
-                            categories=($(pacman -Sg | grep '^blackarch-' | cut -d' ' -f1 | sort -u))
+                            categories=($(pacman -Sg 2>/dev/null | grep '^blackarch-' | cut -d' ' -f1 | sort -u))
                             _describe -t categories "category" categories
                             ;;
                     esac
