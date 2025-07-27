@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+# blackarch-helper: A CLI tool to explore BlackArch tools and categories
+
+# Check if fzf is installed
+check_fzf() {
+    if ! command -v fzf &>/dev/null; then
+        echo "⚠️  fzf not found. Install it using: sudo pacman -S fzf"
+        exit 1
+    fi
+}
+
+# List all available BlackArch categories
+list_categories() {
+    pacman -Sg | grep '^blackarch-' | cut -d' ' -f1 | sort -u
+}
+
+# List all tools in BlackArch repository
+list_tools() {
+    pacman -Sgg | grep '^blackarch-' | cut -d' ' -f2 | sort -u
+}
+
+# List tools in a specific category
+list_from_category() {
+    local category="$1"
+    if [[ -z "$category" ]]; then
+        echo "Usage: $0 list <category>"
+        exit 1
+    fi
+    pacman -Sg "$category" | awk '{print $2}'
+}
+
+# Interactive category selector using fzf
+interactive_menu() {
+    check_fzf
+    local category=$(list_categories | fzf --prompt="Select a category: ")
+    if [[ -n "$category" ]]; then
+        echo "Tools in $category:"
+        list_from_category "$category"
+    else
+        echo "No category selected."
+    fi
+}
+
+# Install all tools from a given category
+install_category() {
+    local category="$1"
+    if [[ -z "$category" ]]; then
+        echo "Usage: $0 install <category>"
+        exit 1
+    fi
+    sudo pacman -S --needed $(pacman -Sg "$category" | awk '{print $2}')
+}
+
+# Search tools by keyword
+search_tool() {
+    local keyword="$1"
+    if [[ -z "$keyword" ]]; then
+        echo "Usage: $0 search <keyword>"
+        exit 1
+    fi
+    list_tools | grep -i "$keyword"
+}
+
+# Get info about a specific tool
+info_tool() {
+    local tool="$1"
+    if [[ -z "$tool" ]]; then
+        echo "Usage: $0 info <tool-name>"
+        exit 1
+    fi
+    pacman -Si "$tool"
+}
+
+# Command dispatcher
+case "$1" in
+    categories) list_categories ;;
+    tools) list_tools ;;
+    list) list_from_category "$2" ;;
+    fzf) interactive_menu ;;
+    install) install_category "$2" ;;
+    search) search_tool "$2" ;;
+    info) info_tool "$2" ;;
+    *)
+        echo "Usage: $0 {categories|tools|list|fzf|install|search|info}"
+        exit 1
+        ;;
+esac
+
