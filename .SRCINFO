@@ -6,11 +6,10 @@ pkgbase = blackarch-helper
 	arch = any
 	license = MIT
 	depends = bash
-	depends = pacman
-	depends = grep
-	depends = coreutils
 	depends = fzf
 	source = blackarch-helper
+	source = LICENSE
+	md5sums = SKIP
 	md5sums = SKIP
 
 pkgname = blackarch-helper

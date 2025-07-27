@@ -6,11 +6,12 @@ pkgdesc="Simple CLI helper to explore and install tools from the BlackArch repos
 arch=('any')
 url="https://github.com/x0rgus/blackarch-helper"
 license=('MIT')
-depends=('bash' 'pacman' 'grep' 'coreutils' 'fzf')
-source=("blackarch-helper")
-md5sums=('SKIP')
+depends=('bash' 'fzf')
+source=("blackarch-helper" "LICENSE")
+md5sums=('SKIP' 'SKIP')
 
 package() {
     install -Dm755 "$srcdir/blackarch-helper" "$pkgdir/usr/bin/blackarch-helper"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
 
