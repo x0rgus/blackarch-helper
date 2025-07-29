@@ -30,14 +30,16 @@ yay -S blackarch-helper
 
 You can also build the package manually from the source code.
 
+1. Clone the repository
 ```bash
-# 1. Clone the repository
 git clone https://github.com/x0rgus/blackarch-helper.git
-
-# 2. Change into the directory
+```
+2. Change into the directory
+```bash
 cd blackarch-helper
-
-# 3. Build and install the package
+```
+3. Build and install the package
+```bash
 makepkg -si
 ```
 
