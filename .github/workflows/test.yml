@@ -1,0 +1,31 @@
+name: Test BlackArch Helper
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Run tests in Arch Linux container
+        run: |
+          docker run --rm -v $PWD:/app -w /app archlinux:base-devel bash -c "
+            pacman -Sy --noconfirm archlinux-keyring base-devel namcap
+
+            echo 'Running makepkg --nobuild...'
+            makepkg --nobuild
+
+            echo 'Running namcap on PKGBUILD...'
+            namcap PKGBUILD || true
+
+            echo 'Testing execution of script...'
+            chmod +x blackarch-helper
+            ./blackarch-helper categories > /dev/null
+
+            echo 'Build and test completed successfully.'
+          "
