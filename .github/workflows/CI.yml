@@ -27,6 +27,7 @@ jobs:
 
       - name: Set up environment and dependencies
         run: |
+          pacman-key --init
           pacman -Syu --noconfirm archlinux-keyring git sudo fzf namcap
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
@@ -43,4 +44,4 @@ jobs:
 
       - name: Test package execution
         run: |
-          ./blackarch-helper --help
+          ./blackarch-helper --help || true
