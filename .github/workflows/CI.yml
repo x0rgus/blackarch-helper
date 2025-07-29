@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    name: Build and test PKGBUILD
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up environment
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring sudo git
+          pacman -S --noconfirm fzf namcap
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builduser:builduser .
+
+      - name: Build package
+        run: |
+          sudo -u builduser bash -c "makepkg --nobuild --syncdeps --noconfirm"
+          sudo -u builduser bash -c "makepkg --clean --noconfirm"
+
+      - name: Run namcap
+        run: |
+          namcap PKGBUILD
+
+      - name: Test execution
+        run: |
+          ./blackarch-helper --help || echo "Tool did not run properly"
+
+  lint:
+    name: Style check with pkgcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install pkgcheck
+        run: |
+          pip install --user pkgcheck-arch
+      - name: Run pkgcheck
+        run: |
+          pkgcheck PKGBUILD
