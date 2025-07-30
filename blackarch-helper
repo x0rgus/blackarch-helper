@@ -50,6 +50,37 @@ require_db() {
 }
 
 # --- Logic Functions (Backend) ---
+_list_all_categories_from_db() {
+    local CACHE_FILE="${CACHE_DIR}/categories.txt"
+    if [[ -f "$CACHE_FILE" && "$CACHE_FILE" -nt "$DB_PATH" ]]; then
+        cat "$CACHE_FILE"
+        return
+    fi
+
+    einfo "Generating category list (this happens only once)..." >&2
+    tar -xOf "$DB_PATH" --wildcards '*/desc' 2>/dev/null \
+        | awk '/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p' \
+        | sort -u \
+        | grep -v '^blackarch$' > "$CACHE_FILE"
+    cat "$CACHE_FILE"
+}
+
+_list_tools_in_category() {
+    local category="$1"
+    einfo "Finding tools in category '${category}'..." >&2
+
+    local all_packages
+    all_packages=$(tar -tzf "$DB_PATH" | grep '/$')
+
+    echo "$all_packages" | while read -r pkg_dir; do
+        local groups_content
+        groups_content=$(tar -xOf "$DB_PATH" "${pkg_dir}desc" 2>/dev/null | awk '/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p')
+        
+        if echo "$groups_content" | grep -q -w "$category"; then
+            echo "$pkg_dir" | sed 's|/||'
+        fi
+    done
+}
 _fetch_mirror_list() {
     local mirrorlist_url="https://raw.githubusercontent.com/BlackArch/blackarch-site/master/blackarch-mirrorlist"
     einfo "Fetching and processing mirror list from GitHub..." >&2
@@ -203,27 +234,42 @@ handle_install() {
     einfo "Successfully built and installed packages from source '$source_pkg_name'."
 }
 
+# Adapted interactive_menu with two-level navigation
 interactive_menu() {
     require_db
 
-    # Export all functions and variables needed by the preview environment.
-    export -f _get_pkg_info
-    export -f einfo ewarn eerror # <-- EXPORT THE LOGGING FUNCTIONS
-    export DB_PATH               # Export data path
-    export COLOR_RESET COLOR_GREEN COLOR_YELLOW COLOR_RED COLOR_CYAN COLOR_BOLD # Export all colors
+    # Export functions and variables needed by the fzf preview subshell.
+    export -f _get_pkg_info einfo ewarn eerror
+    export DB_PATH COLOR_RESET COLOR_GREEN COLOR_YELLOW COLOR_RED COLOR_CYAN COLOR_BOLD
 
-    local pkg
-    pkg=$(_list_all_tools_from_db | fzf --prompt="▶ Select a tool to build: " \
-        --height=50% --border \
-        --header="ENTER to select | CTRL-C to exit" \
-        --preview-window 'right:60%:border-left' \
-        --preview 'bash -c "_get_pkg_info {}"')
+    while true; do
+        local category
+        category=$(_list_all_categories_from_db | fzf --prompt="▶ Category: " --height=40% --border \
+            --header="Press ESC to exit")
+        
+        # Exit if user presses ESC in category menu
+        [[ -z "$category" ]] && break
 
-    if [[ -n "$pkg" ]]; then
-        handle_install "$pkg"
-    else
-        einfo "No tool selected. Exiting."
-    fi
+        while true; do
+            einfo "Category: ${COLOR_CYAN}$category${COLOR_RESET}"
+            
+            local selected_tool
+            selected_tool=$(_list_tools_in_category "$category" | fzf --prompt="▶ Tool: " --border \
+                --header="ENTER to build | ESC to go back" \
+                --preview-window 'right:60%:border-left' \
+                --preview 'bash -c "_get_pkg_info {}"')
+
+            # Go back to categories if user presses ESC in tool menu
+            [[ -z "$selected_tool" ]] && break
+
+            handle_install "$selected_tool"
+            
+            einfo "Press any key to continue browsing this category..."
+            read -n 1 -s
+        done
+    done
+
+    einfo "Exiting."
 }
 
 usage() {
