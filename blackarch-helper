@@ -70,7 +70,8 @@ _list_all_tools_from_db() {
 _get_pkg_info() {
     local pkg_name="$1"
     local pkg_dir
-    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${pkg_name}-" | head -n 1)
+    # FIX: Use '/' as the separator, not '-', to match the tarball's directory structure.
+    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${pkg_name}/" | head -n 1)
 
     if [[ -z "$pkg_dir" ]]; then
         eerror "Package '$pkg_name' not found in local database."
@@ -86,7 +87,7 @@ _get_pkg_info() {
         awk -v key="$1" "$awk_parser_script" <<< "$desc_content"
     }
 
-    printf "${COLOR_BOLD}Package Info: ${COLOR_CYAN}%s${COLOR_RESET}\n" "$pkg_name"
+    printf "${COLOR_BOLD}Package Info: ${COLOR_CYAN}%s${COLOR_RESET}\n" "$(_parse_field '%NAME%')"
     printf "Version      : %s\n" "$(_parse_field '%VERSION%')"
     printf "Description  : %s\n" "$(_parse_field '%DESC%')"
     printf "Upstream URL : ${COLOR_CYAN}%s${COLOR_RESET}\n" "$(_parse_field '%URL%')"
