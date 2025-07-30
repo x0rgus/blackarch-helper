@@ -50,6 +50,32 @@ require_db() {
 }
 
 # --- Logic Functions (Backend) ---
+
+# Creates a searchable index mapping categories to tools.
+_update_tool_index() {
+    local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
+    # If the index is up-to-date, do nothing.
+    if [[ -f "$INDEX_FILE" && "$INDEX_FILE" -nt "$DB_PATH" ]]; then
+        return
+    fi
+
+    einfo "Generating tool index for fast category searching..." >&2
+    ewarn "This is a one-time operation and may take up to a minute." >&2
+
+    # This script runs for each 'desc' file found by the tar command.
+    # It gets the package name from the TAR_FILENAME environment variable,
+    # reads the groups from stdin, and prints "group:package_name" for each.
+    local process_script='
+        pkg_name=$(dirname "$TAR_FILENAME")
+        groups=$(awk "/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p")
+        for group in $groups; do
+            echo "${group}:${pkg_name}"
+        done
+    '
+    # The main command: extract all 'desc' files and pipe their content to the script above.
+    tar -xvf "$DB_PATH" --wildcards '*/desc' --to-command="bash -c '$process_script'" 2>/dev/null > "$INDEX_FILE"
+}
+
 _list_all_categories_from_db() {
     local CACHE_FILE="${CACHE_DIR}/categories.txt"
     if [[ -f "$CACHE_FILE" && "$CACHE_FILE" -nt "$DB_PATH" ]]; then
@@ -65,22 +91,14 @@ _list_all_categories_from_db() {
     cat "$CACHE_FILE"
 }
 
+# List all tools in a category by reading the pre-built index.
 _list_tools_in_category() {
     local category="$1"
-    einfo "Finding tools in category '${category}'..." >&2
-
-    local all_packages
-    all_packages=$(tar -tzf "$DB_PATH" | grep '/$')
-
-    echo "$all_packages" | while read -r pkg_dir; do
-        local groups_content
-        groups_content=$(tar -xOf "$DB_PATH" "${pkg_dir}desc" 2>/dev/null | awk '/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p')
-        
-        if echo "$groups_content" | grep -q -w "$category"; then
-            echo "$pkg_dir" | sed 's|/||'
-        fi
-    done
+    local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
+    # Instantly find all lines for the category and cut out the tool name.
+    grep "^${category}:" "$INDEX_FILE" | cut -d: -f2-
 }
+
 _fetch_mirror_list() {
     local mirrorlist_url="https://raw.githubusercontent.com/BlackArch/blackarch-site/master/blackarch-mirrorlist"
     einfo "Fetching and processing mirror list from GitHub..." >&2
@@ -237,6 +255,7 @@ handle_install() {
 # Adapted interactive_menu with two-level navigation
 interactive_menu() {
     require_db
+    _update_tool_index
 
     # Export functions and variables needed by the fzf preview subshell.
     export -f _get_pkg_info einfo ewarn eerror
