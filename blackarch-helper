@@ -143,46 +143,64 @@ handle_info() {
 
 handle_install() {
     require_db
-    [[ -z "$1" ]] && edie "Usage: $0 install <package-name>"
-    local pkg_name="$1"
+    local versioned_name="$1"
+    [[ -z "$versioned_name" ]] && edie "Usage: $0 install <full-package-name-from-list>"
+
+    einfo "Resolving source package for '${versioned_name}'..."
+    local pkg_dir
+    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${versioned_name}/" | head -n 1)
+    if [[ -z "$pkg_dir" ]]; then
+        edie "Could not find directory for '$versioned_name' in the database."
+    fi
+    local desc_content=$(tar -xOf "$DB_PATH" "${pkg_dir}desc")
+    # FIX: Use %BASE% to get the source package name, which matches the git directory.
+    local source_pkg_name=$(awk '/^%BASE%$/{getline; print; exit}' <<< "$desc_content")
+
+    if [[ -z "$source_pkg_name" ]]; then
+        edie "Could not determine source package name from %BASE% field for '$versioned_name'."
+    fi
+    einfo "Resolved to source package: '$source_pkg_name'"
+
+    local pkg_build_dir="${BUILD_DIR}/${source_pkg_name}"
     
-    local pkg_build_dir="${BUILD_DIR}/${pkg_name}"
-    
-    einfo "Preparing to build '$pkg_name' from source."
-    read -p $'\e[33m[WARN]\e[0m This will clone the PKGBUILD and run makepkg. Proceed? (y/N) ' -n 1 -r reply
+    # FIX: Build the prompt string correctly to allow variable expansion.
+    local prompt_msg
+    prompt_msg="${COLOR_YELLOW}[WARN]${COLOR_RESET} This will clone the PKGBUILD for '${COLOR_CYAN}${source_pkg_name}${COLOR_RESET}'. Proceed? (y/N) "
+    einfo "Preparing to build '${versioned_name}' from source package '${source_pkg_name}'."
+    read -p "$prompt_msg" -n 1 -r reply
     echo
     if [[ ! "$reply" =~ ^[Yy]$ ]]; then
         ewarn "Build cancelled by user."
         exit 0
     fi
-    
+
     [[ -d "$pkg_build_dir" ]] && rm -rf "$pkg_build_dir"
     mkdir -p "$pkg_build_dir"
-    
-    einfo "Cloning PKGBUILD for '$pkg_name'..."
+
+    einfo "Cloning PKGBUILD for '$source_pkg_name'..."
     if ! (cd "$pkg_build_dir" && \
           git init -q && \
           git remote add origin "$REPO_URL" && \
           git config core.sparseCheckout true && \
-          echo "packages/${pkg_name}/" > .git/info/sparse-checkout && \
+          echo "packages/${source_pkg_name}/" > .git/info/sparse-checkout && \
           git pull --depth=1 origin master); then
-        edie "Failed to clone PKGBUILD for '$pkg_name'."
+        edie "Failed to clone PKGBUILD for '$source_pkg_name'."
     fi
-    
-    local pkg_path_in_repo="${pkg_build_dir}/packages/${pkg_name}"
+
+    local pkg_path_in_repo="${pkg_build_dir}/packages/${source_pkg_name}"
     if [[ ! -d "$pkg_path_in_repo" || ! -f "${pkg_path_in_repo}/PKGBUILD" ]]; then
-        edie "Could not find a PKGBUILD for '$pkg_name' after cloning."
+        edie "Could not find a PKGBUILD for '$source_pkg_name' after cloning."
     fi
-    
+
     einfo "Entering build directory: ${pkg_path_in_repo}"
     cd "$pkg_path_in_repo"
-    
+
     einfo "Running 'makepkg -si'. This may ask for your sudo password."
     if ! makepkg -si --noconfirm; then
-        edie "Build failed for '$pkg_name'. Check the output above for errors."
+        edie "Build failed for '$source_pkg_name'."
     fi
-    
-    einfo "Successfully built and installed '$pkg_name'."
+
+    einfo "Successfully built and installed packages from source '$source_pkg_name'."
 }
 
 interactive_menu() {
