@@ -13,6 +13,11 @@ DB_PATH="${CACHE_DIR}/blackarch.db.tar.gz"
 BUILD_DIR="${CACHE_DIR}/builds"
 REPO_URL="https://github.com/BlackArch/blackarch.git"
 
+# --- Cleanup ---
+set -Eeuo pipefail
+trap 'eerror "An error occurred. Exiting."; exit 1' ERR
+trap 'echo -e "\n${COLOR_YELLOW}Execution interrupted by user.${COLOR_RESET}"; exit 1' INT
+
 ## --- Color and Symbol Configuration ---
 COLOR_RESET=$'\033[0m'
 COLOR_GREEN=$'\033[0;32m'
@@ -324,36 +329,40 @@ EOF
 }
 
 # --- Main Execution ---
-check_dependencies
-mkdir -p "$CACHE_DIR"
+main() {
+    check_dependencies
+    mkdir -p "$CACHE_DIR"
 
-if [[ $# -eq 0 ]]; then
-    usage
-    exit 0
-fi
+    if [[ $# -eq 0 ]]; then
+        interactive_menu # call interactive menu if no arguments are provided like before
+        exit 0
+    fi
 
-case "$1" in
-    sync)
-        handle_sync
-        ;;
-    search)
-        handle_search "$2"
-        ;;
-    info)
-        handle_info "$2"
-        ;;
-    install)
-        handle_install "$2"
-        ;;
-    interactive | fzf)
-        interactive_menu
-        ;;
-    help | --help | -h)
-        usage
-        ;;
-    *)
-        eerror "Unknown command '$1'."
-        usage
-        exit 1
-        ;;
-esac
+    case "$1" in
+        sync)
+            handle_sync
+            ;;
+        search)
+            handle_search "$2"
+            ;;
+        info)
+            handle_info "$2"
+            ;;
+        install)
+            handle_install "$2"
+            ;;
+        interactive | fzf)
+            interactive_menu
+            ;;
+        help | --help | -h)
+            usage
+            ;;
+        *)
+            eerror "Unknown command '$1'."
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
