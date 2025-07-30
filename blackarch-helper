@@ -54,7 +54,6 @@ require_db() {
 # Creates a searchable index mapping categories to tools.
 _update_tool_index() {
     local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
-    # If the index is up-to-date, do nothing.
     if [[ -f "$INDEX_FILE" && "$INDEX_FILE" -nt "$DB_PATH" ]]; then
         return
     fi
@@ -62,17 +61,20 @@ _update_tool_index() {
     einfo "Generating tool index for fast category searching..." >&2
     ewarn "This is a one-time operation and may take up to a minute." >&2
 
-    # This script runs for each 'desc' file found by the tar command.
-    # It gets the package name from the TAR_FILENAME environment variable,
-    # reads the groups from stdin, and prints "group:package_name" for each.
     local process_script='
-        pkg_name=$(dirname "$TAR_FILENAME")
-        groups=$(awk "/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p")
-        for group in $groups; do
-            echo "${group}:${pkg_name}"
-        done
+        versioned_name=$(dirname "$TAR_FILENAME")
+        desc_content=$(cat)
+        base_name=$(echo "$desc_content" | awk "/^%BASE%$/{getline; print; exit}")
+        groups=$(echo "$desc_content" | awk "/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p")
+
+        # Only proceed if we found a base name
+        if [[ -n "$base_name" ]]; then
+            for group in $groups; do
+                # New index format: category:base_name:versioned_name
+                echo "${group}:${base_name}:${versioned_name}"
+            done
+        fi
     '
-    # The main command: extract all 'desc' files and pipe their content to the script above.
     tar -xvf "$DB_PATH" --wildcards '*/desc' --to-command="bash -c '$process_script'" 2>/dev/null > "$INDEX_FILE"
 }
 
@@ -95,9 +97,21 @@ _list_all_categories_from_db() {
 _list_tools_in_category() {
     local category="$1"
     local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
-    # Instantly find all lines for the category and cut out the tool name.
-    grep "^${category}:" "$INDEX_FILE" | cut -d: -f2-
+    
+    # Get a list of all installed packages once for speed
+    local installed_pkgs
+    installed_pkgs=$(pacman -Qq)
+
+    # Read the index and check the status of each tool
+    grep "^${category}:" "$INDEX_FILE" | while IFS=: read -r _ base_name versioned_name; do
+        if echo "$installed_pkgs" | grep -q -w "^${base_name}$"; then
+            printf "✔ %s\n" "$versioned_name"
+        else
+            printf "  %s\n" "$versioned_name"
+        fi
+    done
 }
+
 
 _fetch_mirror_list() {
     local mirrorlist_url="https://raw.githubusercontent.com/BlackArch/blackarch-site/master/blackarch-mirrorlist"
@@ -257,7 +271,6 @@ interactive_menu() {
     require_db
     _update_tool_index
 
-    # Export functions and variables needed by the fzf preview subshell.
     export -f _get_pkg_info einfo ewarn eerror
     export DB_PATH COLOR_RESET COLOR_GREEN COLOR_YELLOW COLOR_RED COLOR_CYAN COLOR_BOLD
 
@@ -266,7 +279,6 @@ interactive_menu() {
         category=$(_list_all_categories_from_db | fzf --prompt="▶ Category: " --height=40% --border \
             --header="Press ESC to exit")
         
-        # Exit if user presses ESC in category menu
         [[ -z "$category" ]] && break
 
         while true; do
@@ -274,16 +286,18 @@ interactive_menu() {
             
             local selected_tool
             selected_tool=$(_list_tools_in_category "$category" | fzf --prompt="▶ Tool: " --border \
-                --header="ENTER to build | ESC to go back" \
+                --header="✔ = Installed | ENTER to build | ESC to go back" \
                 --preview-window 'right:60%:border-left' \
-                --preview 'bash -c "_get_pkg_info {}"')
+                --preview 'bash -c "_get_pkg_info {} | cut -c3-"')
 
-            # Go back to categories if user presses ESC in tool menu
             [[ -z "$selected_tool" ]] && break
 
-            handle_install "$selected_tool"
+            # FIX: Clean the selection to remove the checkmark before installing
+            local clean_tool_name
+            clean_tool_name=$(echo "$selected_tool" | cut -c3-)
+            handle_install "$clean_tool_name"
             
-            einfo "Press any key to continue browsing this category..."
+            einfo "Press any key to continue Browse this category..."
             read -n 1 -s
         done
     done
