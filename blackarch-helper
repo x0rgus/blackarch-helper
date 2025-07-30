@@ -67,30 +67,19 @@ _update_tool_index() {
         base_name=$(echo "$desc_content" | awk "/^%BASE%$/{getline; print; exit}")
         groups=$(echo "$desc_content" | awk "/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p")
 
-        # Only proceed if we found a base name
         if [[ -n "$base_name" ]]; then
             for group in $groups; do
-                # New index format: category:base_name:versioned_name
                 echo "${group}:${base_name}:${versioned_name}"
             done
         fi
     '
-    tar -xvf "$DB_PATH" --wildcards '*/desc' --to-command="bash -c '$process_script'" 2>/dev/null > "$INDEX_FILE"
+    # FIX: Changed tar -xvf to tar -xf to remove verbose output.
+    tar -xf "$DB_PATH" --wildcards '*/desc' --to-command="bash -c '$process_script'" 2>/dev/null > "$INDEX_FILE"
 }
 
-_list_all_categories_from_db() {
-    local CACHE_FILE="${CACHE_DIR}/categories.txt"
-    if [[ -f "$CACHE_FILE" && "$CACHE_FILE" -nt "$DB_PATH" ]]; then
-        cat "$CACHE_FILE"
-        return
-    fi
-
-    einfo "Generating category list (this happens only once)..." >&2
-    tar -xOf "$DB_PATH" --wildcards '*/desc' 2>/dev/null \
-        | awk '/^%GROUPS%$/{p=1;next} /^%.*%$/{p=0} p' \
-        | sort -u \
-        | grep -v '^blackarch$' > "$CACHE_FILE"
-    cat "$CACHE_FILE"
+_list_all_categories() {
+    local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
+    cut -d: -f1 "$INDEX_FILE" | sort -u | grep -v '^blackarch$'
 }
 
 # List all tools in a category by reading the pre-built index.
@@ -280,7 +269,7 @@ interactive_menu() {
 
     while true; do
         local category
-        category=$(_list_all_categories_from_db | fzf --prompt="▶ Category: " --height=40% --border \
+        category=$(_list_all_categories | fzf --prompt="▶ Category: " --height=40% --border \
             --header="Press ESC to exit")
         
         [[ -z "$category" ]] && break
