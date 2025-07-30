@@ -131,9 +131,11 @@ _list_all_tools_from_db() {
 }
 
 _get_pkg_info() {
-    local pkg_name="$1"
+    # FIX: Trim the first two characters (the '✔ ' or '  ') from the input line.
+    local pkg_name
+    pkg_name=$(echo "$1" | cut -c3-)
+
     local pkg_dir
-    # FIX: Use '/' as the separator, not '-', to match the tarball's directory structure.
     pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${pkg_name}/" | head -n 1)
 
     if [[ -z "$pkg_dir" ]]; then
@@ -150,7 +152,9 @@ _get_pkg_info() {
         awk -v key="$1" "$awk_parser_script" <<< "$desc_content"
     }
 
-    printf "${COLOR_BOLD}Package Info: ${COLOR_CYAN}%s${COLOR_RESET}\n" "$(_parse_field '%NAME%')"
+    printf "${COLOR_BOLD}Package Info${COLOR_RESET}\n"
+    printf "Name         : %s\n" "$(_parse_field '%NAME%')"
+    printf "Source Pkg   : %s\n" "$(_parse_field '%BASE%')"
     printf "Version      : %s\n" "$(_parse_field '%VERSION%')"
     printf "Description  : %s\n" "$(_parse_field '%DESC%')"
     printf "Upstream URL : ${COLOR_CYAN}%s${COLOR_RESET}\n" "$(_parse_field '%URL%')"
