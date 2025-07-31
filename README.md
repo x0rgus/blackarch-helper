@@ -2,14 +2,17 @@
 
 A TUI/CLI helper for exploring and managing tools from the BlackArch repository.
 
-This tool provides an `fzf`-based interactive menu for easy navigation and package management, as well as a standard non-interactive command-line interface for scripting and automation.
+This tool provides an `fzf`-based interactive menu for easy navigation and package management, as well as a standard command-line interface for scripting and automation.
+![image](media/s1.png)   
+![image](media/s2.png)
 
 ## Features
 
-* **Interactive Mode (TUI)**: A fast and fluid text-based interface for Browse categories and tools.
+* **Interactive Mode (TUI)**: A fast and fluid text-based interface for browsing categories and tools.
 * **Multi-Tool Installation**: Select multiple tools at once using the `TAB` key and install them in a single operation.
+* **Package Information**: View package details in a preview pane and which package is already installed.
 * **Intuitive Navigation**: Easily move between the category and tool menus.
-* **Non-Interactive CLI Mode**: Use standard subcommands like `category list` or `tool search` for scripting.
+* **CLI Tool**: Use standard subcommands like `category list` or `tool search` for scripting.
 * **Shell Completion**: Includes autocompletion scripts for Bash and Zsh.
 * **Lightweight**: A simple Bash script with `fzf` as its main dependency.
 
@@ -27,14 +30,16 @@ yay -S blackarch-helper
 
 You can also build the package manually from the source code.
 
+1. Clone the repository
 ```bash
-# 1. Clone the repository
 git clone https://github.com/x0rgus/blackarch-helper.git
-
-# 2. Change into the directory
+```
+2. Change into the directory
+```bash
 cd blackarch-helper
-
-# 3. Build and install the package
+```
+3. Build and install the package
+```bash
 makepkg -si
 ```
 
@@ -52,25 +57,24 @@ blackarch-helper
 * **Arrow Keys**: Navigate up and down the list.
 * **TAB**: Select or deselect one or more items (in the tool menu).
 * **ENTER**: Confirm a selection (enter a category or proceed to install tools).
+* **CTRL+I**: Toggles package information preview.
 * **ESC**: Go back to the previous menu or exit.
 
-### Non-Interactive Commands
+### CLI
 
-The tool can also be used as a traditional CLI application.
+The tool can also be used as a traditional CLI application:
 
-```bash
-# List all BlackArch categories
-blackarch-helper category list
+| Command                                      | Description                                      |
+|----------------------------------------------|------------------------------------------------|
+| `blackarch-helper category list`             | List all BlackArch categories.                   |
+| `sudo blackarch-helper category install <name>` | Install an entire category (requires root privileges). |
+| `blackarch-helper tool list`                  | List all available tools in the repository.     |
+| `blackarch-helper tool list-installed`       | List only the installed BlackArch tools.        |
+| `blackarch-helper tool search <keyword>`     | Search for a tool containing the specified keyword. |
+| `blackarch-helper tool info <package>`       | Get information about a specific package.       |
+| `sudo blackarch-helper tool install <package>` | Install a specific package (requires root privileges). |
+| `sudo blackarch-helper tool upgrade`         | Upgrade all installed BlackArch tools (requires root privileges). |
 
-# Search for a tool containing the word "proxy"
-blackarch-helper tool search proxy
-
-# Get information on the metasploit package
-blackarch-helper tool info metasploit
-
-# Install an entire category (requires root privileges)
-sudo blackarch-helper category install blackarch-passwords
-```
 
 ## Shell Compatibility
 

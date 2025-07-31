@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  arch-build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Pacman packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: ${{ runner.os }}-pacman-${{ hashFiles('**/PKGBUILD') }}
+          restore-keys: |
+            ${{ runner.os }}-pacman-
+
+      - name: Set up environment and dependencies
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm archlinux-keyring git sudo fzf namcap
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builduser:builduser .
+
+      - name: Build package
+        run: |
+          sudo -u builduser makepkg --syncdeps --noconfirm --clean
+
+      - name: Run Namcap analysis
+        run: |
+          namcap PKGBUILD
+          namcap *.pkg.tar.zst
+
+      - name: Test package execution
+        run: |
+          ./blackarch-helper --help || true

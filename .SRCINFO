@@ -4,6 +4,7 @@ pkgbase = blackarch-helper
 	pkgrel = 1
 	url = https://github.com/x0rgus/blackarch-helper
 	arch = any
+	groups = blackarch
 	license = MIT
 	depends = bash
 	depends = curl
@@ -18,5 +19,6 @@ pkgbase = blackarch-helper
 	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = SKIP
+
 
 pkgname = blackarch-helper
