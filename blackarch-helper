@@ -2,12 +2,11 @@
 #
 # blackarch-builder
 # Helper to find, inspect, and build BlackArch tools from source.
-# Author: Lucas "x0rgus" (Refactored by Gemini AI)
+# Author: Lucas "x0rgus"
 # License: MIT
 # Repository: https://github.com/x0rgus/blackarch-helper
 
 # --- Configuration ---
-VERBOSE=false
 CACHE_DIR="${HOME}/.cache/blackarch-builder"
 DB_PATH="${CACHE_DIR}/blackarch.db.tar.gz"
 BUILD_DIR="${CACHE_DIR}/builds"
@@ -35,7 +34,7 @@ edie() { eerror "$1"; exit 1; }
 # --- Core Functions ---
 check_dependencies() {
     local missing_deps=()
-    for dep in git makepkg curl fzf; do
+    for dep in makepkg curl fzf; do
         if ! command -v "$dep" &>/dev/null; then
             missing_deps+=("$dep")
         fi
@@ -43,7 +42,7 @@ check_dependencies() {
 
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
         eerror "Required dependencies not found: ${missing_deps[*]}"
-        ewarn "Please install them. On Arch Linux, try: sudo pacman -S --needed git base-devel curl fzf"
+        ewarn "Please install them. On Arch Linux, try: sudo pacman -S --needed git base-devel curl fzf tar"
         exit 1
     fi
 }
@@ -55,8 +54,6 @@ require_db() {
 }
 
 # --- Logic Functions (Backend) ---
-
-# Creates a searchable index mapping categories to tools.
 _update_tool_index() {
     local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
     if [[ -f "$INDEX_FILE" && "$INDEX_FILE" -nt "$DB_PATH" ]]; then
@@ -78,7 +75,6 @@ _update_tool_index() {
             done
         fi
     '
-    # FIX: Changed tar -xvf to tar -xf to remove verbose output.
     tar -xf "$DB_PATH" --wildcards '*/desc' --to-command="bash -c '$process_script'" 2>/dev/null > "$INDEX_FILE"
 }
 
@@ -87,16 +83,13 @@ _list_all_categories() {
     cut -d: -f1 "$INDEX_FILE" | sort -u | grep -v '^blackarch$'
 }
 
-# List all tools in a category by reading the pre-built index.
 _list_tools_in_category() {
     local category="$1"
     local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
     
-    # Get a list of all installed packages once for speed
     local installed_pkgs
     installed_pkgs=$(pacman -Qq)
 
-    # Read the index and check the status of each tool
     grep "^${category}:" "$INDEX_FILE" | while IFS=: read -r _ base_name versioned_name; do
         if echo "$installed_pkgs" | grep -q -w "^${base_name}$"; then
             printf "✔ %s\n" "$versioned_name"
@@ -105,7 +98,6 @@ _list_tools_in_category() {
         fi
     done
 }
-
 
 _fetch_mirror_list() {
     local mirrorlist_url="https://raw.githubusercontent.com/BlackArch/blackarch-site/master/blackarch-mirrorlist"
@@ -120,12 +112,7 @@ _fetch_mirror_list() {
         sed "s|\$repo|blackarch|g; s|\$arch|${arch}|g"
 }
 
-_list_all_tools_from_db() {
-    tar -tzf "$DB_PATH" | grep '/' | cut -d'/' -f1 | sort -u
-}
-
 _get_pkg_info() {
-    # FIX: Trim the first two characters (the '✔ ' or '  ') from the input line.
     local pkg_name
     pkg_name=$(echo "$1" | cut -c3-)
 
@@ -157,6 +144,66 @@ _get_pkg_info() {
     printf "Depends On   : %s\n" "$(_parse_field '%DEPENDS%' | paste -sd ' ' - || echo 'None')"
 }
 
+_prepare_build_env() {
+    local pkg_identifier="$1"
+    local versioned_name=""
+    local source_pkg_name=""
+    local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
+
+    # Check if the provided name is already a full versioned name
+    if grep -q ":${pkg_identifier}$" "$INDEX_FILE"; then
+        versioned_name="$pkg_identifier"
+    else
+        # If not, assume it's a base name and try to find a unique match
+        local matches
+        matches=$(grep ":${pkg_identifier}:" "$INDEX_FILE")
+        local count
+        count=$(echo "$matches" | wc -l)
+
+        if [[ $count -eq 0 ]]; then
+            edie "Package matching '$pkg_identifier' not found in the index."
+        elif [[ $count -gt 1 ]]; then
+            eerror "Multiple packages found for base name '$pkg_identifier'. Please specify the full versioned name:"
+            echo "$matches" | cut -d: -f3 | sed 's/^/  - /' >&2
+            exit 1
+        else
+            versioned_name=$(echo "$matches" | cut -d: -f3)
+            einfo "Found unique package for '${pkg_identifier}': ${versioned_name}"
+        fi
+    fi
+
+    einfo "Resolving source package for '${versioned_name}'..." >&2
+    local pkg_dir
+    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${versioned_name}/" | head -n 1)
+    if [[ -z "$pkg_dir" ]]; then
+        edie "Could not find directory for '$versioned_name' in the database."
+    fi
+    local desc_content
+    desc_content=$(tar -xOf "$DB_PATH" "${pkg_dir}desc")
+    source_pkg_name=$(awk '/^%BASE%$/{getline; print; exit}' <<< "$desc_content")
+
+    if [[ -z "$source_pkg_name" ]]; then
+        edie "Could not determine source package name for '$versioned_name'."
+    fi
+    einfo "Resolved to source package: '$source_pkg_name'" >&2
+
+    local pkg_build_dir="${BUILD_DIR}/${source_pkg_name}"
+    
+    [[ -d "$pkg_build_dir" ]] && rm -rf "$pkg_build_dir"
+    mkdir -p "$pkg_build_dir"
+
+    einfo "Cloning PKGBUILD for '$source_pkg_name'..." >&2
+    if ! (cd "$pkg_build_dir" && \
+          git init -q && \
+          git remote add origin "$REPO_URL" && \
+          git config core.sparseCheckout true && \
+          echo "packages/${source_pkg_name}/" > .git/info/sparse-checkout && \
+          git pull --depth=1 origin master >/dev/null 2>&1); then
+        edie "Failed to clone PKGBUILD for '$source_pkg_name'."
+    fi
+    
+    echo "$source_pkg_name"
+}
 
 # --- Subcommand Functions (User Interface) ---
 handle_sync() {
@@ -165,7 +212,7 @@ handle_sync() {
     mirrors=$(_fetch_mirror_list)
 
     if [[ -z "$mirrors" ]]; then
-        edie "Could not fetch a valid mirror list. Check your connection."
+        edie "Could not fetch a valid mirror list."
     fi
 
     local db_url=""
@@ -185,49 +232,40 @@ handle_sync() {
     if [[ "$success" == "false" ]]; then
         edie "Failed to download database from all available mirrors."
     fi
+
+    einfo "Sync complete. Forcing tool index regeneration."
+    rm -f "${CACHE_DIR}/tool_index.txt"
+    _update_tool_index
 }
 
 handle_search() {
     require_db
+    _update_tool_index
     [[ -z "$1" ]] && edie "Usage: $0 search <keyword>"
     
-    einfo "Searching for tools with the keyword '$1':"
-    _list_all_tools_from_db | grep -i --color=auto "$1"
+    printf "${COLOR_GREEN}[INFO]${COLOR_RESET} Searching for tools with the keyword '%s':\n" "$1"
+    printf "${COLOR_BOLD}%-20s %s${COLOR_RESET}\n" "Base Name" "Full Name for (install, review, info)"
+    
+    cut -d: -f2,3 "${CACHE_DIR}/tool_index.txt" | sort -u | grep -i --color=auto "$1" | sed -e 's/:/ /'
 }
 
 handle_info() {
     require_db
     [[ -z "$1" ]] && edie "Usage: $0 info <package-name>"
     
-    _get_pkg_info "$1"
+    _get_pkg_info "  $1"
 }
 
 handle_install() {
     require_db
     local versioned_name="$1"
-    [[ -z "$versioned_name" ]] && edie "Usage: $0 install <full-package-name-from-list>"
+    [[ -z "$versioned_name" ]] && edie "Usage: $0 install <full-package-name>"
 
-    einfo "Resolving source package for '${versioned_name}'..."
-    local pkg_dir
-    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${versioned_name}/" | head -n 1)
-    if [[ -z "$pkg_dir" ]]; then
-        edie "Could not find directory for '$versioned_name' in the database."
-    fi
-    local desc_content=$(tar -xOf "$DB_PATH" "${pkg_dir}desc")
-    # FIX: Use %BASE% to get the source package name, which matches the git directory.
-    local source_pkg_name=$(awk '/^%BASE%$/{getline; print; exit}' <<< "$desc_content")
+    local source_pkg_name
+    source_pkg_name=$(_prepare_build_env "$versioned_name")
 
-    if [[ -z "$source_pkg_name" ]]; then
-        edie "Could not determine source package name from %BASE% field for '$versioned_name'."
-    fi
-    einfo "Resolved to source package: '$source_pkg_name'"
-
-    local pkg_build_dir="${BUILD_DIR}/${source_pkg_name}"
-    
-    # FIX: Build the prompt string correctly to allow variable expansion.
     local prompt_msg
-    prompt_msg="${COLOR_YELLOW}[WARN]${COLOR_RESET} This will clone the PKGBUILD for '${COLOR_CYAN}${source_pkg_name}${COLOR_RESET}'. Proceed? (y/N) "
-    einfo "Preparing to build '${versioned_name}' from source package '${source_pkg_name}'."
+    prompt_msg="${COLOR_YELLOW}[WARN]${COLOR_RESET} This will build and install '${COLOR_CYAN}${versioned_name}${COLOR_RESET}'. Proceed? (y/N) "
     read -p "$prompt_msg" -n 1 -r reply
     echo
     if [[ ! "$reply" =~ ^[Yy]$ ]]; then
@@ -235,20 +273,7 @@ handle_install() {
         exit 0
     fi
 
-    [[ -d "$pkg_build_dir" ]] && rm -rf "$pkg_build_dir"
-    mkdir -p "$pkg_build_dir"
-
-    einfo "Cloning PKGBUILD for '$source_pkg_name'..."
-    if ! (cd "$pkg_build_dir" && \
-          git init -q && \
-          git remote add origin "$REPO_URL" && \
-          git config core.sparseCheckout true && \
-          echo "packages/${source_pkg_name}/" > .git/info/sparse-checkout && \
-          git pull --depth=1 origin master); then
-        edie "Failed to clone PKGBUILD for '$source_pkg_name'."
-    fi
-
-    local pkg_path_in_repo="${pkg_build_dir}/packages/${source_pkg_name}"
+    local pkg_path_in_repo="${BUILD_DIR}/${source_pkg_name}/packages/${source_pkg_name}"
     if [[ ! -d "$pkg_path_in_repo" || ! -f "${pkg_path_in_repo}/PKGBUILD" ]]; then
         edie "Could not find a PKGBUILD for '$source_pkg_name' after cloning."
     fi
@@ -256,7 +281,7 @@ handle_install() {
     einfo "Entering build directory: ${pkg_path_in_repo}"
     cd "$pkg_path_in_repo"
 
-    einfo "Running 'makepkg -si'. This may ask for your sudo password."
+    einfo "Running 'makepkg -si'..."
     if ! makepkg -si --noconfirm; then
         edie "Build failed for '$source_pkg_name'."
     fi
@@ -264,7 +289,57 @@ handle_install() {
     einfo "Successfully built and installed packages from source '$source_pkg_name'."
 }
 
-# Adapted interactive_menu with two-level navigation
+handle_review() {
+    require_db
+    local versioned_name="$1"
+    [[ -z "$versioned_name" ]] && edie "Usage: $0 review <full-package-name>"
+
+    local source_pkg_name
+    source_pkg_name=$(_prepare_build_env "$versioned_name")
+    
+    local pkg_path_in_repo="${BUILD_DIR}/${source_pkg_name}/packages/${source_pkg_name}"
+    if [[ ! -f "${pkg_path_in_repo}/PKGBUILD" ]]; then
+        edie "Could not find a PKGBUILD for '$source_pkg_name' after cloning."
+    fi
+
+    einfo "Displaying PKGBUILD for '$source_pkg_name':"
+    echo -e "${COLOR_CYAN}--- START PKGBUILD ---${COLOR_RESET}"
+    cat "${pkg_path_in_repo}/PKGBUILD"
+    echo -e "${COLOR_CYAN}--- END PKGBUILD ---${COLOR_RESET}"
+
+    local prompt_msg
+    prompt_msg="${COLOR_YELLOW}[WARN]${COLOR_RESET} Proceed with building and installing this package? (y/N) "
+    read -p "$prompt_msg" -n 1 -r reply
+    echo
+    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+        ewarn "Build cancelled by user."
+        exit 0
+    fi
+    
+    einfo "Entering build directory: ${pkg_path_in_repo}"
+    cd "$pkg_path_in_repo"
+
+    einfo "Running 'makepkg -si'..."
+    if ! makepkg -si --noconfirm; then
+        edie "Build failed for '$source_pkg_name'."
+    fi
+
+    einfo "Successfully built and installed packages from source '$source_pkg_name'."
+}
+
+handle_clean_cache() {
+    ewarn "This will permanently delete the cache directory at ${CACHE_DIR}."
+    read -p "${COLOR_YELLOW}[WARN]${COLOR_RESET} Are you sure you want to continue? (y/N) " -n 1 -r reply
+    echo
+    if [[ "$reply" =~ ^[Yy]$ ]]; then
+        einfo "Removing cache directory..."
+        rm -rf "$CACHE_DIR"
+        einfo "Cache cleared."
+    else
+        ewarn "Operation cancelled."
+    fi
+}
+
 interactive_menu() {
     require_db
     _update_tool_index
@@ -286,11 +361,10 @@ interactive_menu() {
             selected_tool=$(_list_tools_in_category "$category" | fzf --prompt="▶ Tool: " --border \
                 --header="✔ = Installed | ENTER to build | ESC to go back" \
                 --preview-window 'right:60%:border-left' \
-                --preview 'bash -c "_get_pkg_info {} | cut -c3-"')
+                --preview 'bash -c "_get_pkg_info {}"')
 
             [[ -z "$selected_tool" ]] && break
 
-            # FIX: Clean the selection to remove the checkmark before installing
             local clean_tool_name
             clean_tool_name=$(echo "$selected_tool" | cut -c3-)
             handle_install "$clean_tool_name"
@@ -312,18 +386,19 @@ ${COLOR_BOLD}USAGE:${COLOR_RESET}
     blackarch-builder <command> [argument]
 
 ${COLOR_BOLD}COMMANDS:${COLOR_RESET}
-    ${COLOR_CYAN}sync${COLOR_RESET}            Downloads the BlackArch package database from an official mirror.
-    ${COLOR_CYAN}search${COLOR_RESET} <keyword> Searches for a package by name in the local database.
-    ${COLOR_CYAN}info${COLOR_RESET} <pkg>      Shows information about a specific package.
-    ${COLOR_CYAN}install${COLOR_RESET} <pkg>   Clones the PKGBUILD and builds the package using 'makepkg'.
-    ${COLOR_CYAN}interactive${COLOR_RESET}      Opens an interactive menu to search and build packages.
-    ${COLOR_CYAN}help${COLOR_RESET}             Shows this help message.
+    ${COLOR_CYAN}sync${COLOR_RESET}              Downloads the package database and generates local cache.
+    ${COLOR_CYAN}interactive${COLOR_RESET}        Opens the interactive TUI menu to browse and build.
+    ${COLOR_CYAN}review <package>${COLOR_RESET}      Review the PKGBUILD for a package before building.
+    ${COLOR_CYAN}install <package>${COLOR_RESET}     Build and install a package directly.
+    ${COLOR_CYAN}info <package>${COLOR_RESET}         Shows information about a specific package.
+    ${COLOR_CYAN}search <keyword>${COLOR_RESET}      Searches for a package by a keyword.
+    ${COLOR_CYAN}clean-cache${COLOR_RESET}      Deletes the local cache directory.
+    ${COLOR_CYAN}help${COLOR_RESET}               Shows this help message.
 
 ${COLOR_BOLD}WORKFLOW EXAMPLE:${COLOR_RESET}
     1. ${COLOR_YELLOW}blackarch-builder sync${COLOR_RESET}
-    2. ${COLOR_YELLOW}blackarch-builder search metasploit${COLOR_RESET}
-    3. ${COLOR_YELLOW}blackarch-builder info metasploit${COLOR_RESET}
-    4. ${COLOR_YELLOW}blackarch-builder install metasploit${COLOR_RESET}
+    2. ${COLOR_YELLOW}blackarch-builder interactive${COLOR_RESET}
+    3. ${COLOR_YELLOW}blackarch-builder review nmap-7.95${COLOR_RESET}
 
 EOF
 }
@@ -334,7 +409,7 @@ main() {
     mkdir -p "$CACHE_DIR"
 
     if [[ $# -eq 0 ]]; then
-        interactive_menu # call interactive menu if no arguments are provided like before
+        interactive_menu
         exit 0
     fi
 
@@ -350,6 +425,12 @@ main() {
             ;;
         install)
             handle_install "$2"
+            ;;
+        review)
+            handle_review "$2"
+            ;;
+        clean-cache)
+            handle_clean_cache
             ;;
         interactive | fzf)
             interactive_menu
