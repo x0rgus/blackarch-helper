@@ -382,14 +382,15 @@ interactive_menu() {
     require_db
     _update_tool_index
 
+    # FIX: Export the correct, existing functions for the preview subshell.
     export -f _display_pkg_info _resolve_pkg_name
     export -f einfo ewarn eerror edie
-    export DB_PATH COLOR_RESET COLOR_GREEN COLOR_YELLOW COLOR_RED COLOR_CYAN COLOR_BOLD
+    export DB_PATH CACHE_DIR COLOR_RESET COLOR_GREEN COLOR_YELLOW COLOR_RED COLOR_CYAN COLOR_BOLD
 
     while true; do
         local category
         category=$(_list_all_categories | fzf --prompt="▶ Category: " --height=40% --border \
-            --header="Press ESC to exit")
+            --header="Press ESC to exit" || true)
         
         [[ -z "$category" ]] && break
 
@@ -400,7 +401,7 @@ interactive_menu() {
             selected_tool=$(_list_tools_in_category "$category" | fzf --prompt="▶ Tool: " --border \
                 --header="✔ = Installed | ENTER to build | ESC to go back" \
                 --preview-window 'right:60%:border-left' \
-                --preview 'bash -c "_display_pkg_info \"$(echo {} | cut -c3-)\""')
+                --preview 'bash -c "_display_pkg_info \"$(echo {} | cut -c3-)\""' || true)
 
             [[ -z "$selected_tool" ]] && break
 
@@ -415,6 +416,8 @@ interactive_menu() {
 
     einfo "Exiting."
 }
+
+
 
 usage() {
     cat <<EOF
