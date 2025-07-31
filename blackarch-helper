@@ -33,6 +33,20 @@ eerror() { echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} $1"; } >&2
 edie() { eerror "$1"; exit 1; }
 
 # --- Core Functions ---
+check_blackarch_repo() {
+    if ! grep -q -E "^\s*\[blackarch\]" /etc/pacman.conf; then
+        eerror "BlackArch repository is not configured in /etc/pacman.conf."
+        ewarn "This tool requires the BlackArch repository to be enabled to function correctly."
+        echo -e "\nPlease follow the official setup instructions from https://blackarch.org/guide.html"
+        echo -e "You can set it up by running these commands (the last one as root):"
+        echo -e "\n  ${COLOR_CYAN}curl -O https://blackarch.org/strap.sh${COLOR_RESET}"
+        echo -e "  ${COLOR_CYAN}sha1sum strap.sh${COLOR_RESET} # Verify hash against the one on the website"
+        echo -e "  ${COLOR_CYAN}chmod +x strap.sh${COLOR_RESET}"
+        echo -e "  ${COLOR_CYAN}sudo ./strap.sh${COLOR_RESET}\n"
+        exit 1
+    fi
+}
+
 check_dependencies() {
     local missing_deps=()
     for dep in git makepkg curl fzf; do
@@ -222,7 +236,7 @@ handle_sync() {
         mirrors_to_try=("$custom_mirror")
     else
         local system_mirrors
-        system_mirrors=$(_get_system_mirrors) || true # Continue even if it fails
+        system_mirrors=$(_get_system_mirrors) || true
         if [[ -z "$system_mirrors" ]]; then
             ewarn "No mirrors found in system mirrorlist."
         fi
@@ -452,6 +466,7 @@ main() {
     done
     set -- "${args[@]}"
 
+    check_blackarch_repo
     check_dependencies
     mkdir -p "$CACHE_DIR"
 
