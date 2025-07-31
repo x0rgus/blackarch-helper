@@ -1,10 +1,9 @@
 pkgbase = blackarch-helper
 	pkgdesc = Helper to find, inspect, and build BlackArch packages from source using makepkg.
-	pkgver = 2.0.0
+	pkgver = 2.1.0
 	pkgrel = 1
 	url = https://github.com/x0rgus/blackarch-helper
 	arch = any
-	groups = blackarch
 	license = MIT
 	depends = bash
 	depends = curl
@@ -19,6 +18,5 @@ pkgbase = blackarch-helper
 	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = SKIP
-
 
 pkgname = blackarch-helper
