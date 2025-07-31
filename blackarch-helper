@@ -100,15 +100,16 @@ _list_tools_in_category() {
     done
 }
 
-_get_pkg_info() {
-    local pkg_name
-    pkg_name=$(echo "$1" | cut -c3-)
-
+_display_pkg_info() {
+    local pkg_identifier="$1"
+    local versioned_name
+    versioned_name=$(_resolve_pkg_name "$pkg_identifier")
+    
     local pkg_dir
-    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${pkg_name}/" | head -n 1)
+    pkg_dir=$(tar -tzf "$DB_PATH" | grep "^${versioned_name}/" | head -n 1)
 
     if [[ -z "$pkg_dir" ]]; then
-        eerror "Package '$pkg_name' not found in local database."
+        eerror "Package '$versioned_name' not found in local database."
         return 1
     fi
 
@@ -132,31 +133,36 @@ _get_pkg_info() {
     printf "Depends On   : %s\n" "$(_parse_field '%DEPENDS%' | paste -sd ' ' - || echo 'None')"
 }
 
-_prepare_build_env() {
+_resolve_pkg_name() {
     local pkg_identifier="$1"
-    local versioned_name=""
-    local source_pkg_name=""
     local INDEX_FILE="${CACHE_DIR}/tool_index.txt"
 
     if grep -q ":${pkg_identifier}$" "$INDEX_FILE"; then
-        versioned_name="$pkg_identifier"
-    else
-        local matches
-        matches=$(grep ":${pkg_identifier}:" "$INDEX_FILE")
-        local count
-        count=$(echo "$matches" | wc -l)
-
-        if [[ $count -eq 0 ]]; then
-            edie "Package matching '$pkg_identifier' not found in the index."
-        elif [[ $count -gt 1 ]]; then
-            eerror "Multiple packages found for base name '$pkg_identifier'. Please specify the full versioned name:"
-            echo "$matches" | cut -d: -f3 | sed 's/^/  - /' >&2
-            exit 1
-        else
-            versioned_name=$(echo "$matches" | cut -d: -f3)
-            einfo "Found unique package for '${pkg_identifier}': ${versioned_name}"
-        fi
+        echo "$pkg_identifier"
+        return 0
     fi
+
+    local matches
+    matches=$(grep ":${pkg_identifier}:" "$INDEX_FILE")
+    local count
+    count=$(echo "$matches" | wc -l)
+
+    if [[ $count -eq 0 ]]; then
+        edie "Package matching '$pkg_identifier' not found in the index."
+    elif [[ $count -gt 1 ]]; then
+        eerror "Multiple packages found for base name '$pkg_identifier'. Please specify the full versioned name:"
+        echo "$matches" | cut -d: -f3 | sed 's/^/  - /' >&2
+        exit 1
+    else
+        echo "$matches" | cut -d: -f3
+    fi
+}
+
+_prepare_build_env() {
+    local pkg_identifier="$1"
+    local versioned_name
+    versioned_name=$(_resolve_pkg_name "$pkg_identifier")
+    einfo "Found unique package for '${pkg_identifier}': ${versioned_name}"
 
     einfo "Resolving source package for '${versioned_name}'..." >&2
     local pkg_dir
@@ -166,6 +172,7 @@ _prepare_build_env() {
     fi
     local desc_content
     desc_content=$(tar -xOf "$DB_PATH" "${pkg_dir}desc")
+    local source_pkg_name
     source_pkg_name=$(awk '/^%BASE%$/{getline; print; exit}' <<< "$desc_content")
 
     if [[ -z "$source_pkg_name" ]]; then
@@ -192,92 +199,50 @@ _prepare_build_env() {
 }
 
 # --- Mirror Management Functions ---
-_fetch_raw_mirror_list() {
-    local mirrorlist_url="https://raw.githubusercontent.com/BlackArch/blackarch-site/master/blackarch-mirrorlist"
-    einfo "Fetching raw mirror list from GitHub..." >&2
+_get_system_mirrors() {
+    local mirrorlist_path="/etc/pacman.d/blackarch-mirrorlist"
+    einfo "Reading mirrors from system file: $mirrorlist_path" >&2
     
-    # FIX: Get ALL servers, commented or not, and clean them up.
-    curl -sSfL "$mirrorlist_url" | grep 'Server =' | sed -e 's/^#//' -e 's/Server = //'
+    if [[ ! -r "$mirrorlist_path" ]]; then
+        ewarn "Cannot read system mirrorlist. It may not exist or you have incorrect permissions."
+        return 1
+    fi
+    
+    grep 'Server =' "$mirrorlist_path" | sed -e 's/^#//' -e 's/Server = //'
 }
-
-_rank_mirrors() {
-    local -a raw_mirrors
-    # FIX: Use readarray to safely load mirrors into an array.
-    readarray -t raw_mirrors < <(printf '%s\n' "$@")
-    local arch
-    arch=$(uname -m)
-    
-    einfo "Ranking mirrors by latency in parallel... (testing up to ${#raw_mirrors[@]} mirrors)" >&2
-    
-    local temp_file
-    temp_file=$(mktemp)
-    # Ensure temp file is cleaned up on exit
-    trap 'rm -f "$temp_file"' RETURN
-
-    local batch_size=10
-    local completed=0
-    for i in "${!raw_mirrors[@]}"; do
-        # This block runs in the background for each mirror
-        {
-            local mirror="${raw_mirrors[$i]}"
-            local formatted_mirror
-            formatted_mirror=$(echo "$mirror" | sed "s|\$repo|blackarch|g; s|\$arch|${arch}|g")
-            
-            local latency
-            latency=$(LC_NUMERIC=C curl -o /dev/null -s -w '%{time_total}' --connect-timeout 3 --max-time 5 "${formatted_mirror}/blackarch.db.tar.gz.sig" || echo "999")
-            
-            if [[ "$latency" != "999" ]]; then
-                # Write results to a temporary file to handle parallel writes safely
-                LC_NUMERIC=C printf "%.3f %s\n" "$latency" "$formatted_mirror" >> "$temp_file"
-            fi
-        } &
-
-        # Wait for a batch of processes to finish before starting the next one
-        if (( (i + 1) % batch_size == 0 )) || (( (i + 1) == ${#raw_mirrors[@]} )); then
-            wait
-            completed=$((i + 1))
-            ewarn "(${completed}/${#raw_mirrors[@]}) mirrors tested..."
-        fi
-    done
-    wait
-
-    # Sort the collected results and return only the URLs
-    sort -n "$temp_file" | awk '{print $2}'
-}
-
 
 # --- Subcommand Functions (User Interface) ---
 handle_sync() {
     local custom_mirror="${1:-}"
     mkdir -p "$CACHE_DIR"
     
-    local mirrors_to_try=()
+    local -a mirrors_to_try
     if [[ -n "$custom_mirror" ]]; then
         einfo "Using custom mirror provided: $custom_mirror"
         mirrors_to_try=("$custom_mirror")
     else
-        local raw_mirrors
-        raw_mirrors=$(_fetch_raw_mirror_list)
-        if [[ -z "$raw_mirrors" ]]; then
-            edie "Could not fetch a valid mirror list from GitHub."
+        local system_mirrors
+        system_mirrors=$(_get_system_mirrors) || true # Continue even if it fails
+        if [[ -z "$system_mirrors" ]]; then
+            ewarn "No mirrors found in system mirrorlist."
         fi
-        
-        local ranked_mirrors
-        ranked_mirrors=$(_rank_mirrors "${raw_mirrors[@]}")
-        readarray -t mirrors_to_try <<< "$ranked_mirrors"
+        readarray -t mirrors_to_try <<< "$system_mirrors"
     fi
 
     if [[ ${#mirrors_to_try[@]} -eq 0 ]]; then
-        ewarn "No functional mirrors found after ranking. Attempting to use the official fallback mirror."
-        local arch
-        arch=$(uname -m)
-        mirrors_to_try=("$(echo "$FALLBACK_MIRROR" | sed "s|\$repo|blackarch|g; s|\$arch|${arch}|g")")
+        ewarn "No mirrors to try. Attempting to use the official fallback mirror."
+        mirrors_to_try=("$FALLBACK_MIRROR")
     fi
 
-    einfo "Will attempt to download from the best available mirrors..."
+    einfo "Will attempt to download from available mirrors..."
     local success=false
-    for mirror in "${mirrors_to_try[@]}"; do
+    local arch
+    arch=$(uname -m)
+    for mirror_template in "${mirrors_to_try[@]}"; do
+        local mirror
+        mirror=$(echo "$mirror_template" | sed "s|\$repo|blackarch|g; s|\$arch|${arch}|g")
         local db_url="${mirror}/blackarch.db.tar.gz"
+        
         ewarn "Attempting to download from: ${db_url}"
         if curl --progress-bar -fL -o "$DB_PATH" "$db_url"; then
             einfo "Successfully downloaded database from ${mirror}"
@@ -297,55 +262,6 @@ handle_sync() {
     _update_tool_index
 }
 
-handle_rank_mirrors() {
-    local raw_mirrors
-    raw_mirrors=$(_fetch_raw_mirror_list)
-    local ranked_mirrors
-    ranked_mirrors=$(_rank_mirrors "${raw_mirrors[@]}")
-
-    if [[ -z "$ranked_mirrors" ]]; then
-        edie "Could not find any functional mirrors to rank."
-    fi
-
-    einfo "Top mirrors sorted by speed:"
-    local count=1
-    while read -r mirror; do
-        printf " ${COLOR_CYAN}%2d.${COLOR_RESET} %s\n" "$count" "$mirror"
-        ((count++))
-    done <<< "$ranked_mirrors"
-
-    read -p "${COLOR_YELLOW}[WARN]${COLOR_RESET} How many of the fastest mirrors do you want to save to your system mirrorlist? (e.g., 5, or 0 to cancel) " num_mirrors
-    if [[ ! "$num_mirrors" =~ ^[0-9]+$ ]] || [[ "$num_mirrors" -eq 0 ]]; then
-        ewarn "Operation cancelled."
-        exit 0
-    fi
-    
-    local mirrorlist_path="/etc/pacman.d/blackarch-mirrorlist"
-    ewarn "This will overwrite your '${mirrorlist_path}' with the top ${num_mirrors} mirrors."
-    ewarn "A backup of your current file will be created at '${mirrorlist_path}.bak'."
-    read -p "${COLOR_RED}[DANGER]${COLOR_RESET} Are you sure you want to proceed? (y/N) " -n 1 -r reply
-    echo
-    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
-        ewarn "Operation cancelled."
-        exit 0
-    fi
-    
-    einfo "Backing up current mirrorlist..."
-    sudo cp "$mirrorlist_path" "${mirrorlist_path}.bak"
-    
-    einfo "Generating new mirrorlist content..."
-    local new_content="# BlackArch Mirrorlist generated by blackarch-helper on $(date -R)\n"
-    local arch
-    arch=$(uname -m)
-    new_content+=$(echo "$ranked_mirrors" | head -n "$num_mirrors" | sed "s|/blackarch/os/${arch}|/\$repo/os/\$arch|" | sed 's/^/Server = /')
-
-    einfo "Writing new mirrorlist to '${mirrorlist_path}' with sudo..."
-    echo -e "$new_content" | sudo tee "$mirrorlist_path" > /dev/null
-    
-    einfo "Successfully updated BlackArch mirrorlist."
-    ewarn "You may want to run 'sudo pacman -Syy' to refresh package databases with the new mirrors."
-}
-
 handle_search() {
     require_db
     _update_tool_index
@@ -361,7 +277,7 @@ handle_info() {
     require_db
     [[ -z "$1" ]] && edie "Usage: $0 info <package-name>"
     
-    _get_pkg_info "  $1"
+    _display_pkg_info "$1"
 }
 
 handle_install() {
@@ -452,7 +368,8 @@ interactive_menu() {
     require_db
     _update_tool_index
 
-    export -f _get_pkg_info einfo ewarn eerror
+    export -f _display_pkg_info _resolve_pkg_name
+    export -f einfo ewarn eerror edie
     export DB_PATH COLOR_RESET COLOR_GREEN COLOR_YELLOW COLOR_RED COLOR_CYAN COLOR_BOLD
 
     while true; do
@@ -469,7 +386,7 @@ interactive_menu() {
             selected_tool=$(_list_tools_in_category "$category" | fzf --prompt="▶ Tool: " --border \
                 --header="✔ = Installed | ENTER to build | ESC to go back" \
                 --preview-window 'right:60%:border-left' \
-                --preview 'bash -c "_get_pkg_info {}"')
+                --preview 'bash -c "_display_pkg_info \"$(echo {} | cut -c3-)\""')
 
             [[ -z "$selected_tool" ]] && break
 
@@ -494,11 +411,10 @@ ${COLOR_BOLD}USAGE:${COLOR_RESET}
     blackarch-helper [OPTIONS] <command> [argument]
 
 ${COLOR_BOLD}OPTIONS:${COLOR_RESET}
-    ${COLOR_YELLOW}--mirror <url>${COLOR_RESET}   Use a specific mirror for the 'sync' command, skipping ranking.
+    ${COLOR_YELLOW}--mirror <url>${COLOR_RESET}   Use a specific mirror for the 'sync' command.
 
 ${COLOR_BOLD}COMMANDS:${COLOR_RESET}
-    ${COLOR_CYAN}sync${COLOR_RESET}              Downloads the package database from the fastest mirror.
-    ${COLOR_CYAN}rank-mirrors${COLOR_RESET}      Tests and ranks mirrors, with an option to update the system mirrorlist.
+    ${COLOR_CYAN}sync${COLOR_RESET}              Downloads the package database using your system's mirrorlist.
     ${COLOR_CYAN}interactive${COLOR_RESET}        Opens the interactive TUI menu to browse and build.
     ${COLOR_CYAN}review <package>${COLOR_RESET}      Review the PKGBUILD for a package before building.
     ${COLOR_CYAN}install <package>${COLOR_RESET}     Build and install a package directly.
@@ -510,7 +426,6 @@ ${COLOR_BOLD}COMMANDS:${COLOR_RESET}
 ${COLOR_BOLD}WORKFLOW EXAMPLE:${COLOR_RESET}
     1. ${COLOR_YELLOW}blackarch-helper sync${COLOR_RESET}
     2. ${COLOR_YELLOW}blackarch-helper interactive${COLOR_RESET}
-    3. ${COLOR_YELLOW}blackarch-helper rank-mirrors${COLOR_RESET}
 
 EOF
 }
@@ -548,9 +463,6 @@ main() {
     case "$1" in
         sync)
             handle_sync "$custom_mirror"
-            ;;
-        rank-mirrors)
-            handle_rank_mirrors
             ;;
         search)
             handle_search "$2"
