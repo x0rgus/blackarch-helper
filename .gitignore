@@ -8,3 +8,4 @@ pkg/*
 
 # Migration script
 migrate.sh
+migrate2.sh
